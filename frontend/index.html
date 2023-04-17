@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+ <head>
+   <meta charset="utf-8" />
+   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+   <title>Peter Kay GIFs</title>
+   <meta name="viewport" content="width=device-width, initial-scale=1" />
+ </head>
+ <body>
+   <div id="app">
+        <h1>Select a video</h1>
+        <input v-model="location" v-on:click="selectFromComputer()" type="radio" id="location_computer" name="location" value="computer"><label for="location_computer">from my computer</label><br>
+        <input v-model="location" v-on:click="selectFromInternet()" type="radio" id="location_internet" name="location" value="internet"><label for="location_internet">from the internet</label>
+
+        <div v-show="location=='computer'">
+            <label for="file">File </label><input type="file" id="file" v-on:change="updateComputerPath"/>
+        </div>
+
+        <div v-show="location=='internet'">
+            <label for="url">URL </label><input type="text" placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ" id="url" v-model="internet_path"/>
+        </div>
+
+        <div v-if="location">
+            <button v-on:click="createNewSession()">Load</button>
+        </div>
+
+        <div v-show="preview">
+            <video id="preview" width="320" ref="video" controls @pause="updatePaused">
+                <source id="preview_source" src="http://localhost:7131/preview" type="video/mp4">
+            </video>
+        </div>
+
+        <div>
+            <h1>Crop</h1>
+            <input type="text" placeholder="0">
+            <input type="text" placeholder="100">
+        </div>
+
+        <div v-show="preview">
+            <h1>Time</h1>
+            <input type="text" disabled="true" :value=paused>
+            <button v-on:click="addCaption()">Caption</button>
+        </div>
+
+        <div v-show="captions.length > 0">
+            <h1>Captions</h1>
+            <table>
+                <thead>
+                    <th>#</th>
+                    <th>Start</th>
+                    <th>Caption</th>
+                    <th>End</th>
+                    <th></th>
+                </thead>
+                <tbody>
+                    <tr v-for="(caption,i) in captions">
+                        <td>{{i}}</td>
+                        <td>{{ caption.start }}</td>
+                        <td><input type="text" v-model="caption.text"/></td>
+                        <td>{{ caption.end }}</td>
+                        <td><button @click="scrubTo(i)">Go to</button><button @click="setCaptionStart(i)">Start</button><button @click="setCaptionEnd(i)">End</button><button @click="removeCaption(i)">Remove</button></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+   </div>
+   <script src="https://unpkg.com/vue@next"></script>
+   <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+   <script type="text/javascript">
+        const PkgifApp = {
+            data() {
+                return {
+                    location: null,
+                    preview: null,
+                    paused: false,
+                    internet_path: "",
+                    computer_path: "",
+                    captions: [],
+                    filepath: "/Users/jake/balls.mp4",
+                    linkurl: "https://youtube.com/balls"
+                }
+            },
+            mounted() {
+                this.loadExistingPreview();
+            },
+            methods: {
+                selectFromComputer() {
+                    console.log("Selecting from computer")
+                    axios.get("http://localhost:7131/list")
+                        .then(response => {
+                            console.log("Directory listing was returned successfully")
+                            console.debug(response)
+                        })
+                        .catch(err => {
+                            console.log("Error loading directory listing")
+                            console.debug(err)
+                        })
+                },
+                selectFromInternet() {
+                    console.log("Selecting from Internet")
+                },
+                loadExistingPreview() {
+                    // placeholder for testing
+                    axios.get("http://localhost:7131/nothing")
+                        .then(response => {
+                            this.$data.preview = true
+                            video = this.$refs.video
+                            video.load()
+                            video.play()
+                        })
+                        .catch(err => {
+                            if (err.response.status == 404) {
+                                console.log("No preview exists")
+                            } else {
+                                console.log("Unhandled error response")
+                                console.debug(err)
+                            }
+                        })
+                },
+                updateComputerPath(event) {
+                    console.log(event.target.files)
+                },
+                createNewSession() {
+                    axios.post("http://localhost:7131/", {
+                        type: this.$data.location,
+                        videoUrl: "opii"
+                    })
+                    .then(response => {
+                        this.$data.preview = true
+                        video = this.$refs.video
+                        video.load()
+                        video.play()
+                    })
+                    .catch(err => {
+                        console.debug(err)
+                    })
+                },
+                updatePaused(event) {
+                    console.log("paused at " + event.target.currentTime)
+                    this.$data.paused = event.target.currentTime
+                },
+                addCaption() {
+                    this.$data.captions.push({
+                        start: this.$refs.video.currentTime, end: 0, text: ""
+                    })
+                },
+                scrubTo(i) {
+                    // clicking and clicking again will resume play from this point
+                    if (this.$data.captions[i].start == this.$refs.video.currentTime) {
+                        video.play()
+                    } else {
+                        this.$refs.video.currentTime=this.$data.captions[i].start
+                        video.pause()
+                    }
+                },
+                setCaptionStart(i) {
+                    this.$data.captions[i].start = this.$refs.video.currentTime
+                },
+                setCaptionEnd(i) {
+                    this.$data.captions[i].end = this.$refs.video.currentTime
+                },
+                removeCaption(i) {
+                    let newCaptions = []
+                    for (let index = 0; index < this.$data.captions.length; index++) {
+                        if (index != i) {
+                            newCaptions.push(this.$data.captions[index])
+                        }
+                    }
+                    // TODO sort by start time
+                    this.$data.captions = newCaptions
+                }
+            },
+            computed: {
+                videoElement () {
+                    return this.$refs.video;
+                }
+            }
+       };
+       const app = Vue.createApp(PkgifApp);
+       app.mount("#app");
+   </script>
+ </body>
+</html>
