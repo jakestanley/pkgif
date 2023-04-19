@@ -41,6 +41,7 @@
   <button v-on:click="preview()">Preview</button>
   <h1>Render</h1>
   <button v-on:click="render()">Render</button>
+  <img ref="renderImg" :src="renderUrl" />
 </template>
 
 <script lang="ts">
@@ -52,7 +53,8 @@ export default {
     return {
       id: this.$route.params.id,
       paused: 0,
-      captions: []
+      captions: [],
+      renderUrl: ""
     }
   },
   mounted() {
@@ -127,9 +129,11 @@ export default {
       })
     },
     render() {
-      // TODO router for configuring render options
-      // TODO
-      // axios.put()
+      axios.get('http://localhost:7131/clip/' + this.id + '/render').then((response) => {
+        this.$refs.renderImg.src=""
+        this.$refs.renderImg.src='http://localhost:7131/clip/' + this.id + '/render'
+        console.log('render ready')
+      })
     }
   }
 }

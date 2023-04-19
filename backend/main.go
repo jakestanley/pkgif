@@ -21,9 +21,13 @@ const NOT_CACHED int8 = 0
 const DOWNLOADING int8 = 1
 const CACHED int8 = 2
 
+const FONT_PATH string = "/System/Library/Fonts/Supplemental/Impact.ttf"
+
 var client youtube.Client
 var clips map[string]*Clip
 var cache map[string]int8
+
+var testClip *Clip
 
 type Caption struct {
 	Start float64 `json:"start"`
@@ -277,6 +281,81 @@ func handleClipId(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(clip)
 }
 
+func renderClip(clip *Clip, preview bool) string {
+
+	// TODO need to separate video ID from clip ID here
+
+	var outputPath string = fmt.Sprintf("data/%s.gif", clip.Id)
+	if preview {
+		outputPath = fmt.Sprintf("data/%s-preview.mp4", clip.Id)
+	}
+
+	// TODO dirty preview, dirty non-preview
+	if _, err := os.Stat(outputPath); err == nil && !clip.dirty && preview {
+		fmt.Printf("Preview exists in cache or is not dirty. Skipping render\n")
+	} else {
+
+		fmt.Println("Rendering")
+
+		// TODO move to clip preview method
+		videoId := clip.VideoId
+		var inputPath string = fmt.Sprintf("data/%s.mp4", videoId)
+		if preview {
+			inputPath = fmt.Sprintf("data/%s-preview.mp4", videoId)
+		}
+
+		clipStart := clip.ClipStart
+		clipEnd := clip.ClipEnd
+
+		input_args := ffmpeg_go.KwArgs{"ss": clipStart}
+
+		if clipEnd > clipStart {
+			input_args = ffmpeg_go.KwArgs{"ss": clipStart, "t": clipEnd - clipStart}
+		}
+
+		stream := ffmpeg_go.
+			Input(inputPath, input_args).
+			Filter("fps", ffmpeg_go.Args{"15"})
+
+		if preview {
+			stream = stream.Filter("scale", ffmpeg_go.Args{"240:-2"})
+		}
+
+		fontsize := "48"
+		if preview {
+			fontsize = "16"
+		}
+
+		for _, c := range clip.Captions {
+			fmt.Printf("Adding caption '%s' from %f to %f", c.Text, c.Start, c.End)
+			stream = stream.Drawtext(c.Text, 0, 0, false, ffmpeg_go.KwArgs{
+				"x":           "(w-text_w)/2",
+				"y":           "h-th-10",
+				"fontcolor":   "white",
+				"fontfile":    FONT_PATH,
+				"fontsize":    fontsize,
+				"borderw":     "2",
+				"bordercolor": "black",
+				"enable":      fmt.Sprintf("between(t,%f,%f)", c.Start, c.End),
+			})
+		}
+		// drawtext=fontfile=/path/to/font.ttf:text='Stack Overflow':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,5,10)'
+		if preview {
+			stream.
+				Output(outputPath, ffmpeg_go.KwArgs{"map": "0:a"}).
+				OverWriteOutput().ErrorToStdOut().Run()
+		} else {
+			stream.
+				Output(outputPath).
+				OverWriteOutput().ErrorToStdOut().Run()
+		}
+
+		clip.dirty = false
+	}
+
+	return outputPath
+}
+
 func handleClipIdPreview(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodGet {
@@ -285,57 +364,27 @@ func handleClipIdPreview(w http.ResponseWriter, r *http.Request) {
 		clipId := vars["id"]
 
 		fmt.Println("Preview requested for clip id: " + clipId)
-
-		clip := clips[clipId]
-
-		// TODO need to separate video ID from clip ID here
-		previewPath := fmt.Sprintf("data/%s-preview.mp4", clipId)
-
-		if _, err := os.Stat(previewPath); err == nil && !clip.dirty {
-
-			fmt.Printf("Preview exists in cache or is not dirty. Skipping render\n")
-		} else {
-
-			fmt.Println("Preview is dirty or preview does not exist. Rendering")
-
-			// TODO move to clip preview method
-			videoId := clip.videoId
-			filePath := fmt.Sprintf("data/%s-preview.mp4", videoId)
-
-			clipStart := clips[clipId].ClipStart
-			clipEnd := clips[clipId].ClipEnd
-
-			input_args := ffmpeg_go.KwArgs{"ss": clipStart}
-
-			if clipEnd > clipStart {
-				input_args = ffmpeg_go.KwArgs{"ss": clipStart, "t": clipEnd - clipStart}
-			}
-
-			stream := ffmpeg_go.
-				Input(filePath, input_args).
-				Filter("fps", ffmpeg_go.Args{"15"}).
-				Filter("scale", ffmpeg_go.Args{"240:-2"})
-			for _, c := range clip.Captions {
-				fmt.Printf("Adding caption '%s' from %f to %f", c.Text, c.Start, c.End)
-				stream = stream.Drawtext(c.Text, 0, 0, false, ffmpeg_go.KwArgs{
-					"x":         "(w-text_w)/2",
-					"y":         "h-th-10",
-					"fontcolor": "white",
-					"box":       "1",
-					"boxcolor":  "black",
-					"enable":    fmt.Sprintf("between(t,%f,%f)", c.Start, c.End),
-				})
-			}
-			// drawtext=fontfile=/path/to/font.ttf:text='Stack Overflow':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,5,10)'
-			stream.
-				Output(previewPath, ffmpeg_go.KwArgs{"map": "0:a"}).
-				OverWriteOutput().ErrorToStdOut().Run()
-
-			clip.dirty = false
-		}
+		previewPath := renderClip(clips[clipId], true)
 
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFile(w, r, previewPath)
+	} else {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func handleClipIdRender(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method == http.MethodGet {
+
+		vars := mux.Vars(r)
+		clipId := vars["id"]
+
+		fmt.Println("Render requested for clip id: " + clipId)
+		renderPath := renderClip(clips[clipId], false)
+
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFile(w, r, renderPath)
 	} else {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -390,12 +439,48 @@ func getAllClips() []*Clip {
 	return clipsArray
 }
 
+func handleTestPreview(w http.ResponseWriter, r *http.Request) {
+
+	previewPath := renderClip(testClip, true)
+
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, previewPath)
+
+	// test clip should always be dirty
+	testClip.dirty = true
+}
+
+func handleTestRender(w http.ResponseWriter, r *http.Request) {
+
+	previewPath := renderClip(testClip, false)
+
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, previewPath)
+
+	// test clip should always be dirty
+	testClip.dirty = true
+}
+
 func main() {
 
 	fmt.Println("Starting pkgif backend")
 	client = youtube.Client{}
 	clips = map[string]*Clip{}
 	cache = make(map[string]int8)
+
+	testClip = &Clip{
+		Id:          "b6cab676-9952-46bf-969b-de7099627ae8",
+		Title:       "Max and Paddys Road to Nowhere Episode 01",
+		VideoId:     "cpPeXEh5Wkk",
+		VideoLength: 1423,
+		ClipStart:   709.007074,
+		ClipEnd:     711.429409,
+		Captions: []*Caption{
+			&Caption{Start: 0.416659, End: 1.425548, Text: "we went from that"},
+			&Caption{Start: 1.59158, End: 2.556552, Text: "to that"},
+		},
+		dirty: true,
+	}
 
 	// set up routing
 	fmt.Println("Initialising router")
@@ -423,7 +508,10 @@ func main() {
 	mux.HandleFunc("/clip", handleClip)
 	mux.HandleFunc("/clip/{id}", handleClipId)
 	mux.HandleFunc("/clip/{id}/preview", handleClipIdPreview)
-	// mux.HandleFunc("/clip/{id}/render", handleClipIdRender)
+	mux.HandleFunc("/clip/{id}/render", handleClipIdRender)
+
+	mux.HandleFunc("/test/preview", handleTestPreview)
+	mux.HandleFunc("/test/render", handleTestRender)
 
 	// register cors handler
 
